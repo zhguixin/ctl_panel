@@ -22,7 +22,6 @@ sys.setdefaultencoding("utf-8")
 
 #定义一些全局变量
 param = {}
-FLAG_SOCK = False
 
 class Terminal(wx.Panel):
     def __init__(self, parent):
@@ -1412,17 +1411,25 @@ class MainFrame(wx.Frame):
         """
         self.status = msg.data
         
-        if self.status.has_key('terminal_A'):
-            if self.status['terminal_A'] =='true':
-                self.panel_terminal_A.state_green()
-            else:
-                self.panel_terminal_A.state_red()
+        # if len(self.clients)==2:
+        #     self.panel_terminal_A.state_green()
+        #     self.panel_terminal_B.state_green()
+        # elif len(self.clients)==1:
+        #     self.panel_terminal_A.state_green()
+        #     self.panel_terminal_B.state_red()
+        # elif len(self.clients)==0:
+        #     self.panel_terminal_A.state_red()
+        #     self.panel_terminal_B.state_red()
 
-        if self.status.has_key('terminal_B'):
-            if self.status['terminal_B'] =='true':
-                self.panel_terminal_B.state_green()
-            else:
-                self.panel_terminal_B.state_red()
+        if self.status.has_key('A_ip'):
+            self.panel_terminal_A.state_green()
+        else:
+            self.panel_terminal_A.state_red()
+
+        if self.status.has_key('B_ip'):
+            self.panel_terminal_B.state_green()
+        else:
+            self.panel_terminal_B.state_red()
 
         if self.status.has_key('gateway'):
             if self.status['gateway'] =='true':
@@ -1683,6 +1690,9 @@ class MainFrame(wx.Frame):
 
         # 写socket
         outputs = []  
+
+        #客户端地址
+        self.clients = {}
   
         # 消息队列
         message_queues = {} 
@@ -1697,12 +1707,12 @@ class MainFrame(wx.Frame):
                 # 如果读socket是server，则建立连接；如果读socket是connection，则接收数据
                 if s is self.server:  
                     try:
-                        self.connection, client_address = s.accept()  
+                        self.connection, self.client_address = s.accept()  
                     except:
                         print '请输入正确的IP地址'
                         sys.exit()
                     else:
-                        wx.CallAfter(Publisher().sendMessage, "update", u'与 %s %s建立连接\n' % client_address)
+                        wx.CallAfter(Publisher().sendMessage, "update", u'与 %s %s建立连接\n' % self.client_address)
                         self.connection.setblocking(False)  
                         self.inputs.append(self.connection)  
   
@@ -1714,16 +1724,36 @@ class MainFrame(wx.Frame):
                         message = json.loads(data)
                         if message:  
                             print message
+                            # message.update(self.clients)
+                            if message.has_key('terminal') and message['terminal'] == 'true':
+                                if self.clients.has_key('A_ip'):
+                                    self.clients['B_ip'] = self.client_address
+                                self.clients['A_ip'] = self.client_address
                             # 客户端有数据发送   
-                            wx.CallAfter(Publisher().sendMessage, "update_t", message)
+                            # wx.CallAfter(Publisher().sendMessage, "update_t", message)
                             # message_queues[s].put(data)
                             # Add output channel for response    
                             if s not in outputs:
                                 outputs.append(s)
+
+                        if message.has_key('gateway'):
+                            if message['gateway'] == 'false':
+                                name = '信关站'
+                        if message.has_key('terminal'):
+                            if message['terminal'] == 'false':
+                                name = '终端'
+                                if self.clients.has_key('B_ip'):
+                                    print 'bbb'
+                                    del self.clients['B_ip']
+                                else:
+                                    print 'aaa'
+                                    del self.clients['A_ip']
+                        print self.clients
                     except:  
                         print "客户端没有数据发送，关闭连接"
                         # self.DisplayText.AppendText(u'关闭与%s %s的连接\n\n' % client_address)
-                        wx.CallAfter(Publisher().sendMessage, "update", u'关闭与%s %s的连接\n\n' % client_address)  
+                        wx.CallAfter(Publisher().sendMessage, "update", u'关闭与%s的连接\n\n' % name)  
+                        
                         # 停止对该连接的读socket监听  
                         if s in outputs:  
                             outputs.remove(s)  
@@ -1731,7 +1761,9 @@ class MainFrame(wx.Frame):
                         s.close()  
                         # 移除消息队列  
                         del message_queues[s]  
-  
+
+                    merge_message = dict(message.items()+self.clients.items())
+                    wx.CallAfter(Publisher().sendMessage, "update_t", merge_message)
             # 写socket处理 
             for s in writable:  
                 try:  
