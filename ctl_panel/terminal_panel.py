@@ -5,16 +5,15 @@
 #       fly_vedio 
 #   @author: 345570600@qq.com
 #################################
+from gnuradio import audio
 from gnuradio import blocks
 from gnuradio import eng_notation
-from gnuradio import filter
 from gnuradio import gr
 from gnuradio import uhd
 from gnuradio.eng_option import eng_option
 from gnuradio.filter import firdes
 from optparse import OptionParser
 import lte_sat
-import time
 
 import wx  
 import sys
@@ -33,9 +32,11 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 from matplotlib.backends.backend_wx import NavigationToolbar2Wx
+
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 from matplotlib.ticker import LinearLocator, FormatStrFormatter
+
 from matplotlib.widgets import SpanSelector
 
 #设置系统默认编码方式，不用下面两句，中文会乱码
@@ -45,19 +46,35 @@ sys.setdefaultencoding("utf-8")
 param = {}
 test_data = ()
 
-class ue_ping(gr.top_block):
+class dl_recv(gr.top_block):
 
     def __init__(self,**param):
-        gr.top_block.__init__(self, "Ue Ping")
+        gr.top_block.__init__(self, "Dl Recv")
 
         ##################################################
         # Variables
         ##################################################
-        self.samp_rate = samp_rate = 2e6
-        self.sacle_0 = sacle_0 = 1024
-        self.sacle = sacle = 1024
-        self.prbl = prbl = 6
-        self.fftl = fftl = 128
+        try:
+            if param['Bandwidth'] == '1.4':
+                self.prbl = prbl = 6
+                self.fftl = fftl = 128
+                self.multiply_const = multiply_const = 128.0
+            else:
+                self.prbl = prbl = 15
+                self.fftl = fftl = 256
+                self.multiply_const = multiply_const = 256.0
+
+            if param['samp_rate_T'] == '2M':
+                self.samp_rate = samp_rate = 2000000
+            else:
+                self.samp_rate = samp_rate = 4000000 
+
+            self.threshold = threshold = float(param['Threshold'])
+            self.gain = gain = int(param['gain_r_T'])
+            self.RNTI_A = RNTI_A = int(param['RNTI_A'])
+            self.sacle_0 = sacle_0 = 1024
+            self.sacle = sacle = 1024
+        except: print '变量初始化失败'
 
         ##################################################
         # Blocks
@@ -69,56 +86,40 @@ class ue_ping(gr.top_block):
                 channels=range(1),
             ),
         )
-        self.uhd_usrp_source_0.set_samp_rate(4e6)
-        self.uhd_usrp_source_0.set_center_freq(900e6, 0)
-        self.uhd_usrp_source_0.set_gain(20, 0)
-        self.uhd_usrp_sink_0 = uhd.usrp_sink(
-            device_addr="addr=192.168.10.2",
-            stream_args=uhd.stream_args(
-                cpu_format="fc32",
-                channels=range(1),
-            ),
-        )
-        self.uhd_usrp_sink_0.set_samp_rate(samp_rate*2)
-        self.uhd_usrp_sink_0.set_center_freq(1e9, 0)
-        self.uhd_usrp_sink_0.set_gain(20, 0)
-        self.rational_resampler_xxx_0 = filter.rational_resampler_ccc(
-                interpolation=25,
-                decimation=24,
-                taps=None,
-                fractional_bw=None,
-        )
-        self.lte_sat_ul_subframe_mapper_0 = lte_sat.ul_subframe_mapper(61)
-        self.lte_sat_ul_baseband_generator_0 = lte_sat.ul_baseband_generator()
-        self.lte_sat_layer2_ue_0 = lte_sat.layer2_ue(61,False)
-        self.lte_sat_dl_subframe_demapper_0 = lte_sat.dl_subframe_demapper(61)
-        self.lte_sat_dl_baseband_sync_0 = lte_sat.dl_baseband_sync(0.7)
-        self.blocks_tuntap_pdu_1 = blocks.tuntap_pdu("tun1", 10000)
-        self.blocks_multiply_const_vxx_0 = blocks.multiply_const_vcc((1.0, ))
+        self.uhd_usrp_source_0.set_samp_rate(samp_rate)
+        self.uhd_usrp_source_0.set_center_freq(2.0e7, 0)
+        self.uhd_usrp_source_0.set_gain(gain, 0)
+        self.lte_sat_layer2_ue_0 = lte_sat.layer2_ue(RNTI_A)
+        self.lte_sat_dl_subframe_demapper_0 = lte_sat.dl_subframe_demapper(RNTI_A)
+        self.lte_sat_dl_baseband_sync_0 = lte_sat.dl_baseband_sync(threshold)
+        self.blocks_tagged_stream_to_pdu_0_0 = blocks.tagged_stream_to_pdu(blocks.byte_t, "packet_len")
+        self.blocks_pdu_to_tagged_stream_0 = blocks.pdu_to_tagged_stream(blocks.byte_t, "packet_len")
+        self.blocks_null_source_0 = blocks.null_source(gr.sizeof_char*1)
+        self.blocks_multiply_const_vxx_0 = blocks.multiply_const_vcc((multiply_const, ))
+        self.blocks_char_to_float_0_0 = blocks.char_to_float(1, 1024)
+        self.audio_sink_0_0 = audio.sink(48000, "", True)
 
         ##################################################
         # Connections
         ##################################################
-        self.connect((self.rational_resampler_xxx_0, 0), (self.uhd_usrp_sink_0, 0))
-        self.connect((self.lte_sat_ul_baseband_generator_0, 0), (self.rational_resampler_xxx_0, 0))
-        self.connect((self.lte_sat_ul_subframe_mapper_0, 0), (self.lte_sat_ul_baseband_generator_0, 0))
-        self.connect((self.lte_sat_dl_baseband_sync_0, 0), (self.lte_sat_dl_subframe_demapper_0, 0))
+        self.connect((self.blocks_null_source_0, 0), (self.blocks_tagged_stream_to_pdu_0_0, 0))
         self.connect((self.uhd_usrp_source_0, 0), (self.blocks_multiply_const_vxx_0, 0))
-        self.connect((self.blocks_multiply_const_vxx_0, 0), (self.lte_sat_dl_baseband_sync_0, 0))
         self.connect((self.lte_sat_dl_subframe_demapper_0, 0), (self.lte_sat_layer2_ue_0, 0))
+        self.connect((self.blocks_pdu_to_tagged_stream_0, 0), (self.blocks_char_to_float_0_0, 0))
+        self.connect((self.blocks_multiply_const_vxx_0, 0), (self.lte_sat_dl_baseband_sync_0, 0))
+        self.connect((self.blocks_char_to_float_0_0, 0), (self.audio_sink_0_0, 0))
+        self.connect((self.lte_sat_dl_baseband_sync_0, 0), (self.lte_sat_dl_subframe_demapper_0, 0))
 
         ##################################################
         # Asynch Message Connections
         ##################################################
-        self.msg_connect(self.blocks_tuntap_pdu_1, "pdus", self.lte_sat_layer2_ue_0, "pdus")
-        self.msg_connect(self.lte_sat_layer2_ue_0, "sdus", self.blocks_tuntap_pdu_1, "pdus")
-        self.msg_connect(self.lte_sat_layer2_ue_0, "sched_from_l2", self.lte_sat_ul_subframe_mapper_0, "sched_from_l2")
         self.msg_connect(self.lte_sat_dl_baseband_sync_0, "sys_info", self.lte_sat_dl_subframe_demapper_0, "sys_info")
+        self.msg_connect(self.lte_sat_layer2_ue_0, "sdus", self.blocks_pdu_to_tagged_stream_0, "pdus")
+        self.msg_connect(self.blocks_tagged_stream_to_pdu_0_0, "pdus", self.lte_sat_layer2_ue_0, "pdus")
         self.msg_connect(self.lte_sat_dl_subframe_demapper_0, "usg", self.lte_sat_layer2_ue_0, "usg")
-        self.msg_connect(self.lte_sat_dl_baseband_sync_0, "sys_info", self.lte_sat_ul_subframe_mapper_0, "sys_info")
-        self.msg_connect(self.lte_sat_dl_baseband_sync_0, "sys_info", self.lte_sat_ul_baseband_generator_0, "sys_info")
 
     # QT sink close method reimplementation
+
     def get_status(self):
         status = {}
         status['pss_status'] = self.lte_sat_dl_baseband_sync_0.get_pss_status()
@@ -290,7 +291,7 @@ class MatplotPanel(wx.Panel):
         self.axes.clear()
         self.axes.grid(self.cb_grid.IsChecked())
 
-        f = open ( '/home/lh/code/new_panel/matplot_data/pdsch.dat' , 'rb' )
+        f = open ( '/home/lh/matplotlib/dat/subf_has_sr.dat' , 'rb' )
         x = np.fromfile ( f , dtype = np.float32 , count = 10000 )
         f.close()
 
@@ -390,7 +391,7 @@ class PanelOne(wx.Panel):
 
 class MainFrame(wx.Frame):
     def __init__(self,parent,id):
-        wx.Frame.__init__(self, None, title=u"终端界面", size=(1100,730))
+        wx.Frame.__init__(self, None, title=u"终端界面", size=(1100,700))
         self.Centre()
 
         self.sp = wx.SplitterWindow(self)
@@ -478,16 +479,14 @@ class MainFrame(wx.Frame):
         process_state_st = wx.StaticText(self.panel, -1, u"处理状态(捕获／跟踪):\t\t\t")
         self.process_state = PanelOne(self.panel)
 
+        #MAC_PDU个数、误帧率
+        # status_bar_lable = "MAC_PDU个数:\t\t\t误帧率:\t"
+        # self.status_bar = wx.TextCtrl(self.panel, -1, status_bar_lable, style=wx.TE_READONLY)
         mac_pdu = wx.StaticText(self.panel, -1, u"MAC_PDU个数:\t\t\t")
         self.mac_pdu_value = wx.StaticText(self.panel, -1, '')
 
         frame_error_rate = wx.StaticText(self.panel, -1, u"误帧率:")
         self.frame_error_rate_value = wx.StaticText(self.panel, -1, '')
-
-        #用户身份
-        UEList = ['A','B']
-        UE_statictext = wx.StaticText(self.panel, -1, u"终端:")
-        self.UE_c = wx.ComboBox(self.panel, -1, 'A', wx.DefaultPosition, (70,30), UEList, 0)
 
         #连接按钮
         self.connect_button = wx.Button(self.panel, -1, u"连接")
@@ -554,8 +553,6 @@ class MainFrame(wx.Frame):
         sizer3.Add(self.IPText, 3, wx.EXPAND)
         sizer3.Add(port_st, 0, wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL)
         sizer3.Add(self.PortText, 1, wx.EXPAND)
-        sizer3.Add(UE_statictext, 0, wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL)
-        sizer3.Add(self.UE_c, 1, wx.ALIGN_LEFT)
 
         #连接按钮
         sizer4 = wx.BoxSizer(wx.HORIZONTAL)
@@ -577,7 +574,6 @@ class MainFrame(wx.Frame):
     def OnConnect(self, event):
         self.IPText.Disable()
         self.PortText.Disable()
-        self.UE_c.Disable()
         # self.connect_button.Disable()
         self.terminal_config.read("terminal.conf")
         if "address" not in self.terminal_config.sections():
@@ -603,11 +599,7 @@ class MainFrame(wx.Frame):
         self.port = port 
 
         self.status = {}
-        if self.UE_c.GetValue()=='A':
-            self.status['terminal_A'] = "true"
-
-        if self.UE_c.GetValue()=='B':
-            self.status['terminal_B'] = "true"
+        self.status['terminal'] = 'true'
 
         self.t2 = threading.Thread(target = self.monitor_update)
         self.t2.setDaemon(True)
@@ -628,7 +620,6 @@ class MainFrame(wx.Frame):
         self.t3.setDaemon(True)
         self.t3.start()
 
-        # self.client.send('data_status')
         # 读socket
         self.inputs = [ self.client ] 
 
@@ -717,12 +708,14 @@ class MainFrame(wx.Frame):
             data_status = json.dumps(self.send_status)
             self.client.send(data_status)
             time.sleep(1)
+            if self.send_status.has_key('terminal'):
+                del self.send_status['terminal']
 
     #子进程
     def start_top_block(self):
         global param 
-        if param['work_mod'] == '音频业务演示' or param['work_mod'] == '视频业务演示': 
-            self.tb = ue_ping(**param)
+        if param['work_mod'] == '音频业务演示': 
+            self.tb = dl_recv(**param)
         elif param['work_mod'] == '数据测试演示':
             self.tb = dl_ber_recv(**param)
         self.t1 = threading.Thread(target = self.monitor_forever)
@@ -748,12 +741,7 @@ class MainFrame(wx.Frame):
 
     def OnCloseWindow(self, event):
         try:
-            if self.UE_c.GetValue()=='A':
-                self.status['terminal_A'] = "false"
-
-            if self.UE_c.GetValue()=='B':
-                self.status['terminal_B'] = "false"
-
+            self.status['terminal'] = 'false'
             data_status = json.dumps(self.status)
             self.client.send(data_status)
             self.client.close() 
